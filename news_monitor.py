@@ -194,7 +194,7 @@ class NewsMonitor:
         return article_id not in self.recent_article_ids and article_id not in self.processed_articles
 
     def _fetch_webpage_with_retry(self, url, max_retries=5):
-    """获取网页内容（带重试机制）"""
+        """获取网页内容（带重试机制）"""
         retry_count = 0
         while retry_count < max_retries:
             try:
@@ -863,4 +863,5 @@ if __name__ == "__main__":
     # 运行单次任务（只处理未处理过的新文章）
     monitor = NewsMonitor(config)
     monitor.run_once()
+
 
