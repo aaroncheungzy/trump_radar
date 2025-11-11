@@ -1,0 +1,57 @@
+name: 新闻监控与分析任务
+
+# 触发条件：手动触发 + 每日定时执行
+on:
+  workflow_dispatch:  # 允许手动触发
+  schedule:
+    - cron: '0 2 * * *'   # 北京时间10:00（UTC 02:00）
+    - cron: '0 14 * * *'  # 北京时间22:00（UTC 14:00）
+
+jobs:
+  run-task:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      
+      - name: 设置Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: 配置代理（可选）
+        run: |
+          echo "HTTP_PROXY=${{ secrets.HTTP_PROXY }}" >> $GITHUB_ENV
+          echo "HTTPS_PROXY=${{ secrets.HTTPS_PROXY }}" >> $GITHUB_ENV
+        if: ${{ secrets.HTTP_PROXY != '' }}
+      
+      - name: 执行任务
+        env:
+          # 邮件配置（使用指定的环境变量名称）
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_SMTP_SERVER: ${{ secrets.EMAIL_SMTP_SERVER }}
+          EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
+          
+          # AI模型密钥
+          DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          python news_monitor.py
+      
+      - name: 上传日志
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-logs
+          path: |
+            news_monitor.log
+            debug_raw_html.html
+            processed_articles.json
+        if: always()
