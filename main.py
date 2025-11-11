@@ -8,36 +8,34 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from dateutil import parser, tz
 from bs4 import BeautifulSoup
 import threading
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from logging.handlers import RotatingFileHandler
+from urllib3.exceptions import InsecureRequestWarning
 import markdown
-import yfinance as yf  # 导入yfinance库
+import yfinance as yf
+import ssl
 
 # 导入豆包官方SDK
 from volcenginesdkarkruntime import Ark
 
+# 忽略不安全请求警告
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 # 获取当前代码文件目录
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(CURRENT_DIR, "config.json")
 
 # 配置日志
 log_file_path = os.path.join(CURRENT_DIR, "news_monitor.log")
-file_handler = RotatingFileHandler(
-    log_file_path,
-    maxBytes=1024*1024*5,  # 5MB
-    backupCount=5,
-    encoding='utf-8'
-)
-
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',
-    handlers=[file_handler, logging.StreamHandler()]
+    handlers=[logging.FileHandler(log_file_path, encoding='utf-8'), 
+              logging.StreamHandler()]
 )
 
 class TimeoutException(Exception):
@@ -65,51 +63,48 @@ def timeout_wrapper(func, args=(), kwargs={}, timeout=30):
         raise exception[0]
     return result[0]
 
-# 自定义JSON编码器：处理datetime类型
-class DateTimeEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()  # 将datetime转为ISO格式字符串
-        return super().default(obj)
-
 class NewsMonitor:
-    def __init__(self, config, thresholds, financial_assets):
+    def __init__(self, config):
+        # 基础配置
         self.target_url = config["target_url"]
-        self.summary_times = config["summary_times"]  # 每日检查时间（北京时间）
         self.history_file = os.path.join(CURRENT_DIR, config["history_file"])
-        self.deepseek_api_key = config["deepseek_api_key"]
-        self.doubao_api_key = config.get("doubao_api_key")  # 豆包API密钥
-        
-        # 金融资产配置（指数和虚拟货币）
-        self.financial_assets = financial_assets  # 格式: {代码: {名称: ..., 类型: ...}}
+        self.summary_times = config["summary_times"]
         
         # 阈值参数
-        self.CONTENT_LENGTH_THRESHOLD = thresholds["content_length"]
-        self.MAX_RECENT_IDS = thresholds["max_recent_ids"]
-        self.API_RETRY_TIMES = thresholds["api_retry_times"]
-        self.DEEPSEEK_TIMEOUT = thresholds["deepseek_timeout"]
-        self.DOUBAO_TIMEOUT = thresholds.get("doubao_timeout", 60)  # 豆包超时时间
-        self.FINANCIAL_DATA_TIMEOUT = thresholds.get("financial_data_timeout", 30)  # 金融数据获取超时
+        self.thresholds = config["thresholds"]
+        self.CONTENT_LENGTH_THRESHOLD = self.thresholds["content_length"]
+        self.MAX_RECENT_IDS = self.thresholds["max_recent_ids"]
+        self.API_RETRY_TIMES = self.thresholds["api_retry_times"]
+        self.DEEPSEEK_TIMEOUT = self.thresholds["deepseek_timeout"]
+        self.DOUBAO_TIMEOUT = self.thresholds["doubao_timeout"]
+        self.FINANCIAL_DATA_TIMEOUT = self.thresholds["financial_data_timeout"]
+        
+        # 金融资产配置
+        self.financial_assets = config["financial_assets"]
         
         # 邮件配置
-        self.email_config = {
-            "smtp_server": config["email_smtp_server"],
-            "smtp_port": config["email_smtp_port"],
-            "sender_email": config["sender_email"],
-            "sender_password": config["sender_password"],
-            "receiver_emails": config["email_receivers"]
-        }
+        self.email_config = config["email"]
+        
+        # AI模型配置
+        self.ai_config = config["ai_models"]
+        self.deepseek_api_key = self.ai_config["deepseek_api_key"]
+        self.doubao_api_key = self.ai_config["doubao_api_key"]
+        
+        # 自动识别SMTP服务器和端口（如果未提供）
+        self._auto_detect_smtp()
         
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-            "Accept": "application/xml, text/xml, */*"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive"
         }
         
-        # API配置（优先豆包，备用DeepSeek）
+        # API配置
         self.deepseek_api_url = "https://api.deepseek.com/v1/chat/completions"
         self.deepseek_model = "deepseek-chat"
-        self.doubao_client = Ark(api_key=self.doubao_api_key)  # 豆包官方SDK客户端
-        self.doubao_model = "doubao-seed-1-6-251015"  # 豆包模型名称
+        self.doubao_client = Ark(api_key=self.doubao_api_key) if self.doubao_api_key else None
+        self.doubao_model = "doubao-1-5-pro-32k-250115"
         
         # 时区配置
         self.utc_tz = timezone.utc
@@ -128,19 +123,36 @@ class NewsMonitor:
         self.recent_article_ids = set()
         self.last_modified = None
         
-        # 解析汇总时间
-        self.summary_schedules = []
-        for t in self.summary_times:
-            hour, minute = map(int, t.split(":"))
-            self.summary_schedules.append((hour, minute))
-        
-        # 启动时测试模型连接
+        # 测试模型连接
         self.test_model_connections()
         
-        logging.info(f"初始化完成 - 每日检查时间（北京时间）：{self.summary_times}")
-        logging.info(f"每次检查处理所有未处理过的新文章")
-        logging.info(f"监控的金融资产: {[v['name'] for v in self.financial_assets.values()]}")
+        logging.info(f"初始化完成 - 监控的金融资产: {[v['name'] for v in self.financial_assets.values()]}")
         logging.info(f"优先使用模型: {self.doubao_model}, 备用模型: {self.deepseek_model}")
+
+    def _auto_detect_smtp(self):
+        """自动识别SMTP服务器和端口"""
+        if not self.email_config["smtp_server"] and self.email_config["from"]:
+            domain = self.email_config["from"].split('@')[-1]
+            common_smtp = {
+                'gmail.com': ('smtp.gmail.com', 587),
+                'outlook.com': ('smtp.office365.com', 587),
+                'hotmail.com': ('smtp.live.com', 587),
+                'icloud.com': ('smtp.mail.me.com', 587),
+                'qq.com': ('smtp.qq.com', 465),
+                '163.com': ('smtp.163.com', 465),
+                '126.com': ('smtp.126.com', 465),
+                'yeah.net': ('smtp.yeah.net', 465)
+            }
+            if domain in common_smtp:
+                self.email_config["smtp_server"], self.email_config["smtp_port"] = common_smtp[domain]
+                logging.info(f"自动识别SMTP服务器: {self.email_config['smtp_server']}:{self.email_config['smtp_port']}")
+            else:
+                raise ValueError(f"无法自动识别SMTP服务器，请手动配置（邮箱域名：{domain}）")
+        
+        # 确保端口有默认值
+        if not self.email_config["smtp_port"]:
+            self.email_config["smtp_port"] = 587
+            logging.info(f"使用默认SMTP端口: {self.email_config['smtp_port']}")
 
     def _load_history(self):
         """加载已处理文章的历史记录"""
@@ -182,16 +194,28 @@ class NewsMonitor:
         """判断是否为未处理的新文章"""
         return article_id not in self.recent_article_ids and article_id not in self.processed_articles
 
-    def _fetch_webpage_with_retry(self, url):
-        """获取网页内容（带重试机制，失败后每5分钟重试一次）"""
-        while True:
+    def _fetch_webpage_with_retry(self, url, max_retries=5):
+        """获取网页内容（带重试机制）"""
+        retry_count = 0
+        while retry_count < max_retries:
             try:
-                logging.debug(f"获取网页: {url}")
+                logging.debug(f"获取网页: {url}（第{retry_count+1}次尝试）")
                 headers = self.headers.copy()
                 if self.last_modified:
                     headers['If-Modified-Since'] = self.last_modified
-                    
-                response = self.session.get(url, headers=headers, timeout=15)
+                
+                # 处理SSL问题
+                ssl_context = ssl.create_default_context()
+                ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
+                
+                response = self.session.get(
+                    url, 
+                    headers=headers, 
+                    timeout=15,
+                    verify=False,  # 绕过证书验证（解决部分SSL问题）
+                    ssl_context=ssl_context
+                )
+                
                 if response.status_code == 304:
                     logging.info("内容未更新，无需处理")
                     return None
@@ -199,14 +223,20 @@ class NewsMonitor:
                 self.last_modified = response.headers.get('Last-Modified')
                 response.raise_for_status()
                 
-                # 调试用：保存原始HTML
+                # 保存原始HTML用于调试
                 debug_html_path = os.path.join(CURRENT_DIR, "debug_raw_html.html")
                 with open(debug_html_path, "w", encoding="utf-8") as f:
                     f.write(response.text)
                 return response.text
+                
             except Exception as e:
-                logging.error(f"获取网页失败: {e}，将在5分钟后重试")
-                time.sleep(300)  # 5分钟后重试
+                retry_count += 1
+                logging.error(f"获取网页失败: {e}，{(max_retries - retry_count)}次重试机会")
+                if retry_count < max_retries:
+                    time.sleep(10)  # 重试间隔
+                
+        logging.error(f"达到最大重试次数（{max_retries}次），获取网页失败")
+        return None
 
     def _extract_articles_with_pubdate(self, html):
         """提取有效文章（带发布时间、过滤短内容）"""
@@ -272,16 +302,14 @@ class NewsMonitor:
         return articles
 
     def _get_all_new_articles(self, all_articles):
-        """筛选所有未处理的新文章（取消时间窗口限制）"""
+        """筛选所有未处理的新文章"""
         new_articles = []
         
         for article in all_articles:
-            # 检查是否为未处理的新文章（不限制时间）
             article_id = self._generate_article_id(article["title"], article["pub_date"])
             if self._is_new_article(article_id):
                 logging.debug(f"发现新文章: {article['title']}（ID: {article_id}）")
                 new_articles.append(article)
-                # 临时记录已处理ID（避免同批次重复）
                 self.recent_article_ids.add(article_id)
         
         # 去重并排序
@@ -297,7 +325,7 @@ class NewsMonitor:
         return unique_articles
 
     def _get_financial_data(self):
-        """获取金融资产数据（当前价格、24小时涨跌幅）"""
+        """获取金融资产数据"""
         financial_data = {}
         current_time = datetime.now(self.beijing_tz)
         
@@ -305,11 +333,10 @@ class NewsMonitor:
             try:
                 logging.info(f"获取{info['name']}({symbol})的金融数据...")
                 
-                # 使用yfinance获取数据（最多重试3次）
+                # 最多重试3次
                 retry_count = 0
                 while retry_count < 3:
                     try:
-                        # 获取最近1天数据（间隔1小时）
                         ticker = yf.Ticker(symbol)
                         hist = ticker.history(period="1d", interval="1h")
                         
@@ -319,7 +346,7 @@ class NewsMonitor:
                             if price is None:
                                 raise Exception("无法获取价格数据")
                             
-                            # 假设24小时前价格（实际应用中可优化为获取历史数据）
+                            # 获取24小时前价格
                             prev_hist = ticker.history(period="2d", interval="1d")
                             if len(prev_hist) >= 2:
                                 prev_price = prev_hist['Close'].iloc[-2]
@@ -328,7 +355,7 @@ class NewsMonitor:
                         else:
                             # 最新价格
                             price = hist['Close'].iloc[-1]
-                            # 24小时前价格（取最早的记录）
+                            # 24小时前价格
                             prev_price = hist['Close'].iloc[0]
                         
                         # 计算涨跌幅
@@ -349,7 +376,7 @@ class NewsMonitor:
                         retry_count += 1
                         logging.warning(f"获取{info['name']}数据失败（第{retry_count}次重试）: {e}")
                         if retry_count < 3:
-                            time.sleep(2)  # 重试间隔
+                            time.sleep(2)
                         else:
                             financial_data[symbol] = {
                                 "name": info["name"],
@@ -368,12 +395,11 @@ class NewsMonitor:
         return financial_data
 
     def _call_doubao_api(self, prompt):
-        """调用豆包官方SDK（优先使用）"""
-        if not self.doubao_api_key:
+        """调用豆包官方SDK"""
+        if not self.doubao_client or not self.doubao_api_key:
             raise Exception("豆包API密钥未配置")
             
         try:
-            # 豆包官方调用格式
             response = self.doubao_client.chat.completions.create(
                 model=self.doubao_model,
                 messages=[{"role": "user", "content": prompt}],
@@ -383,13 +409,12 @@ class NewsMonitor:
             )
             return response.choices[0].message.content
         
-        # 通用异常捕获（兼容所有SDK版本）
         except Exception as e:
             logging.error(f"豆包SDK调用失败: {str(e)}")
             raise
 
     def _call_deepseek_api(self, prompt):
-        """调用DeepSeek API（备用）"""
+        """调用DeepSeek API"""
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.deepseek_api_key}"
@@ -424,16 +449,16 @@ class NewsMonitor:
     def _call_llm_api(self, prompt):
         """优先调用豆包，失败则调用DeepSeek"""
         try:
-            logging.info(f"尝试调用优先模型: {self.doubao_model}")
+            logging.info(f"尝试调用豆包模型: {self.doubao_model}")
             return timeout_wrapper(
                 self._call_doubao_api, 
                 args=(prompt,), 
                 timeout=self.DOUBAO_TIMEOUT
             )
         except Exception as e:
-            logging.warning(f"优先模型调用失败，切换到备用模型: {str(e)}")
+            logging.warning(f"豆包模型调用失败，切换到DeepSeek: {str(e)}")
             try:
-                logging.info(f"尝试调用备用模型: {self.deepseek_model}")
+                logging.info(f"尝试调用DeepSeek模型: {self.deepseek_model}")
                 return timeout_wrapper(
                     self._call_deepseek_api, 
                     args=(prompt,), 
@@ -445,73 +470,74 @@ class NewsMonitor:
                 return f"【所有模型调用失败: {str(e2)}】"
 
     def test_model_connections(self):
-        """测试所有模型是否能正常调用"""
+        """测试模型连接"""
         logging.info("\n===== 开始模型连通性测试 =====")
         
         # 测试豆包
         doubao_ok = False
-        try:
-            logging.info(f"测试 豆包 模型: {self.doubao_model}")
-            response = self.doubao_client.chat.completions.create(
-                model=self.doubao_model,
-                messages=[{"role": "user", "content": "测试连接，返回'OK'即可"}],
-                max_tokens=5
-            )
-            if response.choices[0].message.content.strip() == "OK":
-                doubao_ok = True
-                logging.info(f"✅ 豆包 模型调用成功")
-            else:
-                logging.warning(f"❌ 豆包 响应异常: {response.choices[0].message.content}")
-        except Exception as e:  # 通用异常捕获
-            logging.error(f"❌ 豆包 调用失败: {str(e)}")
+        if self.doubao_client and self.doubao_api_key:
+            try:
+                response = self.doubao_client.chat.completions.create(
+                    model=self.doubao_model,
+                    messages=[{"role": "user", "content": "测试连接，返回'OK'即可"}],
+                    max_tokens=5
+                )
+                if response.choices[0].message.content.strip() == "OK":
+                    doubao_ok = True
+                    logging.info(f"✅ 豆包模型调用成功")
+                else:
+                    logging.warning(f"❌ 豆包响应异常: {response.choices[0].message.content}")
+            except Exception as e:
+                logging.error(f"❌ 豆包调用失败: {str(e)}")
+        else:
+            logging.warning("⚠️ 未配置豆包API密钥，跳过测试")
         
         # 测试DeepSeek
         deepseek_ok = False
-        try:
-            logging.info(f"测试 DeepSeek 模型: {self.deepseek_model}")
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.deepseek_api_key}"
-            }
-            data = {
-                "model": self.deepseek_model,
-                "messages": [{"role": "user", "content": "测试连接，返回'OK'即可"}],
-                "max_tokens": 5
-            }
-            response = self.session.post(
-                self.deepseek_api_url,
-                headers=headers,
-                json=data,
-                timeout=self.DEEPSEEK_TIMEOUT
-            )
-            response.raise_for_status()
-            result = response.json()
-            if result.get("choices", []) and result["choices"][0]["message"]["content"].strip() == "OK":
-                deepseek_ok = True
-                logging.info(f"✅ DeepSeek 模型调用成功")
-            else:
-                logging.warning(f"❌ DeepSeek 响应异常: {result}")
-        except Exception as e:
-            logging.error(f"❌ DeepSeek 调用失败: {str(e)}")
-        
-        # 总结测试结果
-        if doubao_ok and deepseek_ok:
-            logging.info("===== 所有模型测试通过 =====")
-        elif doubao_ok:
-            logging.warning("===== 仅备用模型测试失败，优先模型可用 =====")
-        elif deepseek_ok:
-            logging.warning("===== 仅优先模型测试失败，备用模型可用 =====")
+        if self.deepseek_api_key:
+            try:
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.deepseek_api_key}"
+                }
+                data = {
+                    "model": self.deepseek_model,
+                    "messages": [{"role": "user", "content": "测试连接，返回'OK'即可"}],
+                    "max_tokens": 5
+                }
+                response = self.session.post(
+                    self.deepseek_api_url,
+                    headers=headers,
+                    json=data,
+                    timeout=self.DEEPSEEK_TIMEOUT
+                )
+                response.raise_for_status()
+                result = response.json()
+                if result.get("choices", []) and result["choices"][0]["message"]["content"].strip() == "OK":
+                    deepseek_ok = True
+                    logging.info(f"✅ DeepSeek模型调用成功")
+                else:
+                    logging.warning(f"❌ DeepSeek响应异常: {result}")
+            except Exception as e:
+                logging.error(f"❌ DeepSeek调用失败: {str(e)}")
         else:
-            logging.error("===== 所有模型测试失败，程序可能无法正常工作 =====")
+            logging.warning("⚠️ 未配置DeepSeek API密钥，跳过测试")
+        
+        # 检查是否有可用模型
+        if not doubao_ok and not deepseek_ok:
+            logging.error("❌ 没有可用的AI模型，请检查API密钥配置")
+            raise Exception("无可用AI模型，程序无法继续运行")
+            
+        logging.info("===== 模型测试完成 =====")
 
     def _translate_single_article(self, article):
-        """单篇文章翻译（使用优先模型）"""
+        """单篇文章翻译"""
         prompt = f"""请将以下文章准确翻译成中文（不用写注释）：
 文章内容：{article['content']}"""
         return self._call_llm_api(prompt)
 
     def _translate_articles_batch(self, articles):
-        """批量翻译文章（按单篇拆分返回）"""
+        """批量翻译文章"""
         translations = []
         for i, article in enumerate(articles, 1):
             logging.info(f"正在翻译第{i}/{len(articles)}篇文章...")
@@ -528,7 +554,7 @@ class NewsMonitor:
         return translations
 
     def _summarize_economic_impact(self, translations, financial_data):
-        """汇总所有文章的经济影响分析（结合金融数据）"""
+        """汇总经济影响分析"""
         if not translations:
             return "【无有效文章可分析】"
         
@@ -552,8 +578,7 @@ class NewsMonitor:
 1. 先简明扼要总结所有文章；
 2. 结合提供的金融数据，分析对美国经济及相关市场的整体潜在影响，解释影响逻辑和传导路径，指出关键风险或机遇；
 3. 给出对投资者的针对性建议；
-4. 编号使用1.，2.，以此类推；
-5. 语言专业、客观，逻辑清晰，不超过500字。
+4. 语言专业、客观，逻辑清晰，不超过400字。
 
 {financial_str}
 
@@ -562,7 +587,7 @@ class NewsMonitor:
         return self._call_llm_api(prompt)
 
     def _send_summary_email(self, articles, translations, impact_summary, financial_data):
-        """发送汇总分析邮件（包含金融数据）"""
+        """发送汇总邮件"""
         try:
             summary_time = datetime.now(self.beijing_tz).strftime("%Y-%m-%d %H:%M")
             subject = f"【{summary_time} 新闻汇总分析】共{len(articles)}篇新文章"
@@ -600,7 +625,7 @@ class NewsMonitor:
                 if "error" in data:
                     financial_html += f"<td colspan='3'>{data['error']}</td>"
                 else:
-                    # 涨跌颜色标记（涨红跌绿）
+                    # 涨跌颜色标记
                     change_style = "color:red;" if data["change_24h"] >= 0 else "color:green;"
                     percent_style = "color:red;" if data["change_percent_24h"] >= 0 else "color:green;"
                     
@@ -634,6 +659,12 @@ class NewsMonitor:
             <p>{markdown.markdown(impact_summary)}</p>
             """
             
+            msg = MIMEMultipart()
+            msg['From'] = self.email_config["from"]
+            msg['To'] = ", ".join(self.email_config["to"].split(","))
+            msg['Subject'] = subject
+            
+            # 构建邮件内容
             email_body = f"""
             <p>您好，以下是新文章的汇总分析结果（{summary_time} 北京时间）：</p>
             {time_info}
@@ -642,35 +673,29 @@ class NewsMonitor:
             {financial_html}
             <p>此邮件为自动发送，请勿回复。</p>
             """
-            
-            msg = MIMEMultipart()
-            msg['From'] = self.email_config["sender_email"]
-            msg['To'] = ", ".join(self.email_config["receiver_emails"])
-            msg['Subject'] = subject
             msg.attach(MIMEText(email_body, 'html', 'utf-8'))
             
+            # 发送邮件
             smtp_server = self.email_config["smtp_server"]
-            smtp_port = self.email_config["smtp_port"]
+            smtp_port = int(self.email_config["smtp_port"]) if self.email_config["smtp_port"] else 587
             
             if smtp_port == 465:
                 with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=10) as server:
-                    server.login(self.email_config["sender_email"], self.email_config["sender_password"])
+                    server.login(self.email_config["from"], self.email_config["password"])
                     server.sendmail(
-                        self.email_config["sender_email"],
-                        self.email_config["receiver_emails"],
-                        msg.as_string()
-                    )
-            elif smtp_port == 587:
-                with smtplib.SMTP(smtp_server, smtp_port, timeout=10) as server:
-                    server.starttls()
-                    server.login(self.email_config["sender_email"], self.email_config["sender_password"])
-                    server.sendmail(
-                        self.email_config["sender_email"],
-                        self.email_config["receiver_emails"],
+                        self.email_config["from"],
+                        self.email_config["to"].split(","),
                         msg.as_string()
                     )
             else:
-                raise Exception(f"不支持的SMTP端口：{smtp_port}，请使用465或587")
+                with smtplib.SMTP(smtp_server, smtp_port, timeout=10) as server:
+                    server.starttls()
+                    server.login(self.email_config["from"], self.email_config["password"])
+                    server.sendmail(
+                        self.email_config["from"],
+                        self.email_config["to"].split(","),
+                        msg.as_string()
+                    )
             
             logging.info(f"汇总分析邮件发送成功！收件人：{msg['To']}")
             return True
@@ -680,22 +705,22 @@ class NewsMonitor:
             return False
 
     def _process_summary_batch(self, articles):
-        """处理汇总批次文章（翻译+分析+金融数据+输出+邮件）"""
+        """处理汇总批次"""
         # 获取金融数据
         financial_data = self._get_financial_data()
         
         if not articles:
-            logging.info("无新文章，仅输出金融数据")
-            # 控制台输出金融数据
+            logging.info("无新文章，仅输出金融数据并发送邮件")
             self._print_financial_data(financial_data)
+            self._send_summary_email([], [], "【本次无新文章】", financial_data)
             return
             
         logging.info(f"开始处理汇总批次（共{len(articles)}篇文章）...")
         
-        # 1. 按单篇翻译
+        # 1. 翻译文章
         translations = self._translate_articles_batch(articles)
         
-        # 2. 汇总经济影响分析（结合金融数据）
+        # 2. 生成分析
         impact_summary = self._summarize_economic_impact(translations, financial_data)
         
         # 3. 控制台输出
@@ -750,24 +775,24 @@ class NewsMonitor:
                       f"{change_sign}{data['change_24h']:<11} {percent_sign}{data['change_percent_24h']}%")
         print("-"*80)
 
-    def _execute_scheduled_check(self):
-        """执行定时检查：获取文章+筛选+处理"""
-        now_bj = datetime.now(self.beijing_tz)
-        logging.info(f"开始执行定时检查（{now_bj.strftime('%Y-%m-%d %H:%M:%S')} 北京时间）")
+    def run_once(self):
+        """执行一次完整流程"""
+        logging.info(f"开始执行单次任务（{datetime.now(self.beijing_tz).strftime('%Y-%m-%d %H:%M:%S')} 北京时间）")
         
-        # 1. 获取网页内容（带重试机制）
+        # 1. 获取网页内容
         html = self._fetch_webpage_with_retry(self.target_url)
         if not html:
-            # 即使没有新文章也获取并输出金融数据
+            # 即使没有内容也发送金融数据邮件
             financial_data = self._get_financial_data()
             self._print_financial_data(financial_data)
-            logging.info("未获取到新内容，本次检查结束")
+            self._send_summary_email([], [], "【未获取到新内容】", financial_data)
+            logging.info("任务执行完成")
             return
             
-        # 2. 提取有效文章
+        # 2. 提取文章
         all_articles = self._extract_articles_with_pubdate(html)
         
-        # 3. 筛选所有未处理的新文章（取消时间窗口限制）
+        # 3. 筛选新文章
         new_articles = self._get_all_new_articles(all_articles) if all_articles else []
         
         # 4. 处理汇总
@@ -775,23 +800,29 @@ class NewsMonitor:
         
         # 5. 清空临时ID缓存
         self.recent_article_ids.clear()
-        logging.info("本次定时检查完成")
+        logging.info("任务执行完成")
 
     def start_scheduler(self):
-        """启动调度器：仅在指定时间点执行检查"""
+        """启动调度器（按配置的时间点执行）"""
         logging.info(f"开始定时调度，检查时间（北京时间）：{self.summary_times}")
         try:
+            # 解析汇总时间
+            summary_schedules = []
+            for t in self.summary_times:
+                hour, minute = map(int, t.split(":"))
+                summary_schedules.append((hour, minute))
+
             while True:
                 now_bj = datetime.now(self.beijing_tz)
                 current_hour, current_minute = now_bj.hour, now_bj.minute
                 
                 # 检查是否匹配任意指定时间（允许±1分钟误差）
-                for (target_hour, target_minute) in self.summary_schedules:
+                for (target_hour, target_minute) in summary_schedules:
                     if (abs(current_hour - target_hour) == 0 and 
                         abs(current_minute - target_minute) <= 1):
                         
-                        # 执行定时检查
-                        self._execute_scheduled_check()
+                        # 执行任务
+                        self.run_once()
                         # 避免同一时间点重复执行（等待2分钟）
                         time.sleep(120)
                         break
@@ -805,47 +836,63 @@ class NewsMonitor:
             logging.error(f"调度器终止: {e}", exc_info=True)
 
 
-if __name__ == "__main__":
-    # 配置代理（根据实际情况修改或删除）
-    os.environ["HTTP_PROXY"] = "http://127.0.0.1:7890"
-    os.environ["HTTPS_PROXY"] = "http://127.0.0.1:7890"
-
-    # 阈值参数集中配置
-    thresholds = {
-        "content_length": 50,
-        "max_recent_ids": 1000,
-        "deepseek_timeout": 60,
-        "doubao_timeout": 60,
-        "api_retry_times": 3,
-        "financial_data_timeout": 30  # 金融数据获取超时时间
-    }
-
-    # 配置需要监控的金融资产（用户可在此修改）
-    # 格式: {yfinance代码: {"name": "资产名称", "type": "类型"}}
-    financial_assets = {
-        "^IXIC": {"name": "纳斯达克指数", "type": "指数"},
-        "BTC-USD": {"name": "比特币", "type": "加密货币"},
-        "ETH-USD": {"name": "以太币", "type": "加密货币"},
-        "SOL-USD": {"name": "SOL", "type": "加密货币"},
-        "XRP-USD": {"name": "XRP", "type": "加密货币"}
-    }
-
-    # 核心配置参数
-    config = {
-        "target_url": "https://trumpstruth.org/feed",
-        "summary_times": ["10:00", "22:00"],
-        "history_file": "processed_articles.json",
-        "deepseek_api_key": "sk-0b92022c288948a5a6f46fb1034587be",
-        "doubao_api_key": "c6a0e5ac-3c2e-41ab-a261-1cbc458ca07d",  # 替换为实际豆包API密钥
+def load_config():
+    """加载配置文件"""
+    try:
+        if not os.path.exists(CONFIG_PATH):
+            logging.error(f"配置文件不存在: {CONFIG_PATH}")
+            exit(1)
+            
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = json.load(f)
         
+        # 从环境变量覆盖敏感配置（适配GitHub Actions）
         # 邮件配置
-        "email_smtp_server": "smtp.mail.me.com",
-        "email_smtp_port": 587,
-        "sender_email": "aaroncheungzy@icloud.com",
-        "sender_password": "uyss-qnpl-xpae-fpuu",
-        "email_receivers": ["aaroncheungzy@icloud.com", "zhangyang963@pingan.com.cn"]
-    }
+        if os.getenv("EMAIL_FROM"):
+            config["email"]["from"] = os.getenv("EMAIL_FROM")
+        if os.getenv("EMAIL_PASSWORD"):
+            config["email"]["password"] = os.getenv("EMAIL_PASSWORD")
+        if os.getenv("EMAIL_TO"):
+            config["email"]["to"] = os.getenv("EMAIL_TO")
+        if os.getenv("EMAIL_SMTP_SERVER"):
+            config["email"]["smtp_server"] = os.getenv("EMAIL_SMTP_SERVER")
+        if os.getenv("EMAIL_SMTP_PORT"):
+            config["email"]["smtp_port"] = os.getenv("EMAIL_SMTP_PORT")
+        
+        # AI模型配置
+        if os.getenv("DOUBAO_API_KEY"):
+            config["ai_models"]["doubao_api_key"] = os.getenv("DOUBAO_API_KEY")
+        if os.getenv("DEEPSEEK_API_KEY"):
+            config["ai_models"]["deepseek_api_key"] = os.getenv("DEEPSEEK_API_KEY")
+        
+        # 验证必要配置
+        required = [
+            ("email.from", config["email"]["from"]),
+            ("email.password", config["email"]["password"]),
+            ("email.to", config["email"]["to"])
+        ]
+        missing = [key for key, value in required if not value]
+        if missing:
+            logging.error(f"配置文件缺少必要参数: {', '.join(missing)}")
+            exit(1)
+            
+        return config
+        
+    except Exception as e:
+        logging.error(f"加载配置文件失败: {e}")
+        exit(1)
 
-    # 启动调度器
-    monitor = NewsMonitor(config, thresholds, financial_assets)
+
+if __name__ == "__main__":
+    # 从环境变量读取代理配置
+    if "HTTP_PROXY" in os.environ:
+        os.environ["HTTP_PROXY"] = os.getenv("HTTP_PROXY")
+    if "HTTPS_PROXY" in os.environ:
+        os.environ["HTTPS_PROXY"] = os.getenv("HTTPS_PROXY")
+
+    # 加载配置
+    config = load_config()
+
+    # 运行（默认启动调度器，按配置的时间点执行）
+    monitor = NewsMonitor(config)
     monitor.start_scheduler()
