@@ -1,4 +1,4 @@
-# 新闻监控与金融分析系统
+# Donald J. Trump言论监控与金融分析系统
 
 A powerful tool that automatically monitors news sources, translates articles, analyzes economic impacts, and integrates real-time financial data—all with one-click execution and GitHub Actions support.
 
@@ -181,3 +181,4 @@ schedule:
 ## 贡献
 
 欢迎提交Issue或Pull Request，一起完善这个项目！
+
