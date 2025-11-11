@@ -194,7 +194,7 @@ class NewsMonitor:
         return article_id not in self.recent_article_ids and article_id not in self.processed_articles
 
     def _fetch_webpage_with_retry(self, url, max_retries=5):
-        """获取网页内容（带重试机制）"""
+    """获取网页内容（带重试机制）"""
         retry_count = 0
         while retry_count < max_retries:
             try:
@@ -203,16 +203,17 @@ class NewsMonitor:
                 if self.last_modified:
                     headers['If-Modified-Since'] = self.last_modified
                 
-                # 处理SSL问题
+                # 处理SSL问题（改用全局SSL上下文配置）
                 ssl_context = ssl.create_default_context()
                 ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
+                self.session.mount('https://', HTTPAdapter(ssl_context=ssl_context))  # 挂载SSL上下文
                 
                 response = self.session.get(
                     url, 
                     headers=headers, 
                     timeout=15,
-                    verify=False,  # 绕过证书验证（解决部分SSL问题）
-                    ssl_context=ssl_context
+                    verify=False  # 绕过证书验证（如需严格验证可设为True）
+                    # 移除 ssl_context 参数
                 )
                 
                 if response.status_code == 304:
@@ -862,3 +863,4 @@ if __name__ == "__main__":
     # 运行单次任务（只处理未处理过的新文章）
     monitor = NewsMonitor(config)
     monitor.run_once()
+
