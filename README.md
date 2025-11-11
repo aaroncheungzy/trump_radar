@@ -1,138 +1,183 @@
 # 新闻监控与金融分析系统
 
-一个自动化监控指定新闻源、翻译分析新文章，并结合实时金融数据提供市场洞察的工具。
+A powerful tool that automatically monitors news sources, translates articles, analyzes economic impacts, and integrates real-time financial data—all with one-click execution and GitHub Actions support.
 
-## 功能特点
+## 核心功能
 
-- 定时监控指定新闻源，自动抓取新文章
-- 自动翻译英文文章为中文
-- 结合新闻内容进行经济影响分析
-- 实时获取指定金融资产数据（指数、加密货币等）
-- 生成包含新闻翻译、市场分析和金融数据的汇总报告
-- 自动发送邮件报告
-- 网络故障时自动重试机制
+✅ **自动新闻抓取**：监控指定RSS源，智能识别未处理的新文章  
+✅ **中英文翻译**：基于豆包/DeepSeek双模型的精准翻译  
+✅ **经济影响分析**：结合新闻内容与金融数据生成专业分析报告  
+✅ **实时金融数据**：获取指数（纳斯达克）与加密货币（BTC/ETH/SOL/XRP）实时价格及24h涨跌幅  
+✅ **自动邮件推送**：生成HTML格式报告并发送至指定邮箱  
+✅ **错误重试机制**：网络故障时自动重试，确保任务完成  
+✅ **GitHub Actions适配**：支持云端定时运行，无需本地部署  
 
-## 支持的金融资产
+## 项目结构
 
-默认监控以下资产，可在配置中自定义：
-- 纳斯达克指数
-- 比特币 (BTC)
-- 以太币 (ETH)
-- SOL
-- XRP
+```
+news-monitor-system/
+├── .github/
+│   └── workflows/
+│       └── run.yml          # GitHub Actions工作流配置
+├── config.json             # 核心配置文件（所有参数集中管理）
+├── news_monitor.py         # 主程序文件
+├── requirements.txt        # 依赖库列表
+└── README.md               # 项目说明文档
+```
 
-## 环境要求
+## 快速开始
+
+### 1. 环境准备
 
 - Python 3.8+
-- 所需依赖库：`requirements.txt`中列出
+- 依赖安装：
+  ```bash
+  pip install -r requirements.txt
+  ```
 
-## 安装步骤
+### 2. 配置文件设置
 
-1. 克隆或下载项目代码
-```bash
-git clone <仓库地址>
-cd news-monitor-system
-```
+复制并修改 `config.json`，填写必要参数：
 
-2. 安装依赖包
-```bash
-pip install -r requirements.txt
-```
-
-3. 配置参数（见下方配置说明）
-
-## 配置说明
-
-在主程序文件的`if __name__ == "__main__"`部分配置以下参数：
-
-### 1. 代理配置（可选）
-```python
-os.environ["HTTP_PROXY"] = "http://127.0.0.1:7890"
-os.environ["HTTPS_PROXY"] = "http://127.0.0.1:7890"
-```
-
-### 2. 阈值参数
-```python
-thresholds = {
-    "content_length": 50,  # 文章内容最小长度阈值
-    "max_recent_ids": 1000,  # 最大近期文章ID缓存数
-    "deepseek_timeout": 60,  # DeepSeek API超时时间(秒)
-    "doubao_timeout": 60,  # 豆包API超时时间(秒)
-    "api_retry_times": 3,  # API调用重试次数
-    "financial_data_timeout": 30  # 金融数据获取超时时间(秒)
-}
-```
-
-### 3. 金融资产配置
-```python
-financial_assets = {
+```json
+{
+  "target_url": "https://trumpstruth.org/feed",  // 监控的RSS源URL
+  "history_file": "processed_articles.json",     // 已处理文章记录文件
+  
+  "thresholds": {
+    "content_length": 50,                       // 文章最小长度阈值
+    "max_recent_ids": 1000,                     // 最大缓存ID数量
+    "deepseek_timeout": 60,                     // DeepSeek API超时时间
+    "doubao_timeout": 60,                       // 豆包API超时时间
+    "api_retry_times": 3,                       // API重试次数
+    "financial_data_timeout": 30                // 金融数据超时时间
+  },
+  
+  "financial_assets": {                          // 可自定义监控的金融资产
     "^IXIC": {"name": "纳斯达克指数", "type": "指数"},
     "BTC-USD": {"name": "比特币", "type": "加密货币"},
     "ETH-USD": {"name": "以太币", "type": "加密货币"},
     "SOL-USD": {"name": "SOL", "type": "加密货币"},
     "XRP-USD": {"name": "XRP", "type": "加密货币"}
+  },
+  
+  "email": {
+    "smtp_server": "",                          // SMTP服务器（留空自动识别）
+    "smtp_port": "",                            // SMTP端口（留空自动识别）
+    "from": "your-email@example.com",            // 发件人邮箱
+    "password": "your-password/app-key",         // 邮箱密码/授权码
+    "to": "recipient1@example.com,recipient2@example.com"  // 收件人（多个用逗号分隔）
+  },
+  
+  "ai_models": {
+    "doubao_api_key": "your-doubao-api-key",     // 豆包API密钥
+    "deepseek_api_key": "your-deepseek-api-key"  // DeepSeek API密钥
+  }
 }
 ```
 
-### 4. 核心配置
-```python
-config = {
-    "target_url": "https://trumpstruth.org/feed",  # 监控的新闻源URL
-    "summary_times": ["10:00", "22:00"],  # 每日检查时间（北京时间）
-    "history_file": "processed_articles.json",  # 已处理文章记录文件
-    "deepseek_api_key": "your_deepseek_api_key",  # DeepSeek API密钥
-    "doubao_api_key": "your_doubao_api_key",  # 豆包API密钥
-    
-    # 邮件配置
-    "email_smtp_server": "smtp.mail.me.com",
-    "email_smtp_port": 587,
-    "sender_email": "your_email@example.com",
-    "sender_password": "your_email_password",
-    "email_receivers": ["recipient1@example.com", "recipient2@example.com"]
-}
-```
+### 3. 本地运行
 
-## 使用方法
-
-直接运行主程序：
+直接执行主程序，自动完成全流程：
 ```bash
 python news_monitor.py
 ```
 
-程序将按照配置的时间点（`summary_times`）自动执行以下操作：
-1. 抓取新闻源内容（失败将每5分钟重试）
-2. 识别并提取新文章
-3. 翻译新文章为中文
-4. 获取实时金融资产数据
-5. 结合新闻和金融数据进行经济影响分析
-6. 生成并发送包含所有信息的邮件报告
+## GitHub Actions 部署（推荐）
 
-## 输出说明
+### 1. 仓库准备
 
-1. **控制台输出**：
-   - 程序运行日志
-   - 金融数据表格
-   - 文章翻译内容
-   - 经济影响分析结果
+1. Fork本仓库到你的GitHub账号
+2. 在仓库中添加以下 **Secrets**（`Settings → Secrets and variables → Actions`）：
 
-2. **邮件报告**：
-   - 文章发布时间范围
-   - 原文与中文翻译对照
-   - 经济影响汇总分析
-   - 金融市场数据表格（含24小时涨跌幅）
+| Secret名称          | 说明                                  |
+|---------------------|---------------------------------------|
+| `EMAIL_FROM`        | 发件人邮箱（与config.json一致）        |
+| `EMAIL_PASSWORD`    | 邮箱密码/授权码                       |
+| `EMAIL_TO`          | 收件人邮箱（多个用逗号分隔）           |
+| `DOUBAO_API_KEY`    | 豆包API密钥                           |
+| `DEEPSEEK_API_KEY`  | DeepSeek API密钥                       |
+| `HTTP_PROXY`（可选）| 代理地址（如需要访问境外资源）         |
+| `HTTPS_PROXY`（可选）| 代理地址                              |
 
-3. **日志文件**：
-   - 程序运行日志保存在`news_monitor.log`
-   - 已处理文章记录保存在`processed_articles.json`
-   - 调试用HTML内容保存在`debug_raw_html.html`
+### 2. 自动运行配置
+
+工作流默认配置：
+- 每日北京时间10:00和22:00自动运行
+- 支持手动触发（`Actions → 新闻监控与分析任务 → Run workflow`）
+
+如需修改运行时间，编辑 `.github/workflows/run.yml` 中的 `schedule` 字段：
+```yaml
+schedule:
+  - cron: '0 2 * * *'   # 北京时间10:00（UTC+8 → UTC 02:00）
+  - cron: '0 14 * * *'  # 北京时间22:00（UTC+8 → UTC 14:00）
+```
+
+### 3. 查看运行结果
+
+- 运行日志：`Actions → 选择对应运行记录 → 查看详细日志`
+- 输出文件：每次运行后会自动上传 `news_monitor.log`（日志）、`processed_articles.json`（历史记录）等文件
+- 邮件通知：运行完成后会自动发送HTML格式报告到指定邮箱
+
+## 关键特性说明
+
+### 1. 智能新闻处理
+- 基于文章标题+发布时间生成唯一ID，避免重复处理
+- 自动过滤短内容文章（可通过`content_length`调整阈值）
+- 支持RSS源增量更新检测
+
+### 2. 双AI模型保障
+- 优先使用豆包模型，失败自动切换到DeepSeek
+- 内置模型连通性测试，确保服务可用性
+- 支持超时重试与错误捕获
+
+### 3. 金融数据集成
+- 实时获取资产当前价格、24h涨跌额、24h涨跌幅
+- 自动格式化数据展示，涨跌颜色标记（红涨绿跌）
+- 支持自定义添加/删除金融资产（需使用yfinance支持的代码）
+
+### 4. 灵活配置
+- 所有参数集中在`config.json`，无需修改代码
+- SMTP服务器自动识别（支持主流邮箱：Gmail/Outlook/iCloud/QQ/163等）
+- 支持本地运行与GitHub Actions云端运行无缝切换
 
 ## 注意事项
 
-- 确保API密钥有效且余额充足
-- 部分新闻源和金融数据可能需要科学上网
-- 邮件服务器配置需根据实际邮箱服务商调整
-- 首次运行会创建历史记录文件，后续运行将基于此识别新文章
+1. **API密钥**：确保豆包/DeepSeek API密钥有效且余额充足
+2. **邮箱配置**：
+   - 部分邮箱（如Gmail）需要开启"不太安全的应用访问"或使用应用专用密码
+   - 企业邮箱可能需要手动配置SMTP服务器和端口
+3. **网络访问**：
+   - 目标RSS源和金融数据接口可能需要科学上网
+   - GitHub Actions运行时可通过配置`HTTP_PROXY`和`HTTPS_PROXY` Secrets解决
+4. **历史记录**：`processed_articles.json`文件记录已处理文章，删除该文件会重新处理所有文章
+
+## 常见问题排查
+
+### Q1: 无法获取新闻内容
+- 检查`target_url`是否有效（手动访问确认RSS源可访问）
+- 检查网络连接或代理配置
+- 查看`news_monitor.log`中的具体错误信息
+
+### Q2: 邮件发送失败
+- 验证SMTP服务器和端口是否正确
+- 确认邮箱密码/授权码是否有效
+- 检查收件人邮箱格式是否正确（多个用逗号分隔）
+
+### Q3: 金融数据获取失败
+- 检查网络是否能访问Yahoo Finance
+- 确认金融资产代码是否正确（参考[yfinance支持的代码](https://finance.yahoo.com/)）
+- 查看日志中的具体错误信息
+
+### Q4: GitHub Actions运行失败
+- 检查Secrets是否配置正确
+- 查看运行日志中的错误信息
+- 确认依赖安装是否成功
 
 ## 许可证
 
 [MIT](LICENSE)
+
+## 贡献
+
+欢迎提交Issue或Pull Request，一起完善这个项目！
