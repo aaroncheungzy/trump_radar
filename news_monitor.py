@@ -193,49 +193,50 @@ class NewsMonitor:
         """判断是否为未处理的新文章"""
         return article_id not in self.recent_article_ids and article_id not in self.processed_articles
 
-def _fetch_webpage_with_retry(self, url, max_retries=5):
-    """获取网页内容（带重试机制）"""
-    retry_count = 0
-    while retry_count < max_retries:
-        try:
-            logging.debug(f"获取网页: {url}（第{retry_count+1}次尝试）")
-            headers = self.headers.copy()
-            if self.last_modified:
-                headers['If-Modified-Since'] = self.last_modified
-            
-            # 处理SSL问题：兼容方式（不直接使用SSLContext）
-            # 1. 禁用证书验证（简单直接，适合爬虫场景）
-            # 2. 配置宽松的SSL策略（通过环境变量）
-            os.environ['SSL_CIPHER_LIST'] = 'DEFAULT@SECLEVEL=1'  # 降低SSL安全级别以兼容旧证书
-            
-            response = self.session.get(
-                url, 
-                headers=headers, 
-                timeout=15,
-                verify=False  # 禁用证书验证（解决大部分SSL问题）
-            )
-            
-            if response.status_code == 304:
-                logging.info("内容未更新，无需处理")
-                return None
+    def _fetch_webpage_with_retry(self, url, max_retries=5):
+        """获取网页内容（带重试机制，修复SSLContext错误）"""
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                logging.debug(f"获取网页: {url}（第{retry_count+1}次尝试）")
+                headers = self.headers.copy()
+                if self.last_modified:
+                    headers['If-Modified-Since'] = self.last_modified
                 
-            self.last_modified = response.headers.get('Last-Modified')
-            response.raise_for_status()
-            
-            # 保存原始HTML用于调试
-            debug_html_path = os.path.join(CURRENT_DIR, "debug_raw_html.html")
-            with open(debug_html_path, "w", encoding="utf-8") as f:
-                f.write(response.text)
-            return response.text
-            
-        except Exception as e:
-            retry_count += 1
-            logging.error(f"获取网页失败: {e}，{(max_retries - retry_count)}次重试机会")
-            if retry_count < max_retries:
-                time.sleep(10)  # 重试间隔
-            
-    logging.error(f"达到最大重试次数（{max_retries}次），获取网页失败")
-    return None
+                # 处理SSL问题：兼容所有版本的通用方案
+                # 1. 降低SSL安全级别以兼容旧证书
+                os.environ['SSL_CIPHER_LIST'] = 'DEFAULT@SECLEVEL=1'
+                # 2. 禁用证书验证（避免因证书问题导致的失败）
+                verify_ssl = False
+                
+                response = self.session.get(
+                    url, 
+                    headers=headers, 
+                    timeout=15,
+                    verify=verify_ssl  # 使用布尔值而非SSLContext
+                )
+                
+                if response.status_code == 304:
+                    logging.info("内容未更新，无需处理")
+                    return None
+                    
+                self.last_modified = response.headers.get('Last-Modified')
+                response.raise_for_status()
+                
+                # 保存原始HTML用于调试
+                debug_html_path = os.path.join(CURRENT_DIR, "debug_raw_html.html")
+                with open(debug_html_path, "w", encoding="utf-8") as f:
+                    f.write(response.text)
+                return response.text
+                
+            except Exception as e:
+                retry_count += 1
+                logging.error(f"获取网页失败: {e}，{(max_retries - retry_count)}次重试机会")
+                if retry_count < max_retries:
+                    time.sleep(10)  # 重试间隔
+                
+        logging.error(f"达到最大重试次数（{max_retries}次），获取网页失败")
+        return None
 
     def _extract_articles_with_pubdate(self, html):
         """提取有效文章（带发布时间、过滤短内容）"""
@@ -862,4 +863,3 @@ if __name__ == "__main__":
     # 运行单次任务（只处理未处理过的新文章）
     monitor = NewsMonitor(config)
     monitor.run_once()
-
