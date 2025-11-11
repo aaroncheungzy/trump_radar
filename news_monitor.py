@@ -203,18 +203,22 @@ class NewsMonitor:
                 if self.last_modified:
                     headers['If-Modified-Since'] = self.last_modified
                 
-                # 处理SSL问题（改用全局SSL上下文配置）
+                # 处理SSL问题：使用全局SSL上下文（兼容所有版本）
                 ssl_context = ssl.create_default_context()
                 ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
-                self.session.mount('https://', HTTPAdapter(ssl_context=ssl_context))  # 挂载SSL上下文
+                
+                # 保存原始的verify设置，临时替换为SSL上下文
+                original_verify = self.session.verify
+                self.session.verify = ssl_context  # 用SSL上下文替代默认验证
                 
                 response = self.session.get(
                     url, 
                     headers=headers, 
-                    timeout=15,
-                    verify=False  # 绕过证书验证（如需严格验证可设为True）
-                    # 移除 ssl_context 参数
+                    timeout=15
                 )
+                
+                # 恢复原始的verify设置
+                self.session.verify = original_verify
                 
                 if response.status_code == 304:
                     logging.info("内容未更新，无需处理")
@@ -230,6 +234,9 @@ class NewsMonitor:
                 return response.text
                 
             except Exception as e:
+                # 确保异常时也恢复verify设置
+                if 'original_verify' in locals():
+                    self.session.verify = original_verify
                 retry_count += 1
                 logging.error(f"获取网页失败: {e}，{(max_retries - retry_count)}次重试机会")
                 if retry_count < max_retries:
@@ -863,5 +870,3 @@ if __name__ == "__main__":
     # 运行单次任务（只处理未处理过的新文章）
     monitor = NewsMonitor(config)
     monitor.run_once()
-
-
