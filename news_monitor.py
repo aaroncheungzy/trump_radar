@@ -194,7 +194,7 @@ class NewsMonitor:
         return article_id not in self.recent_article_ids and article_id not in self.processed_articles
 
     def _fetch_webpage_with_retry(self, url, max_retries=5):
-        """获取网页内容（带重试机制，修复SSLContext错误）"""
+        """获取网页内容（带重试机制）"""
         retry_count = 0
         while retry_count < max_retries:
             try:
@@ -204,16 +204,14 @@ class NewsMonitor:
                     headers['If-Modified-Since'] = self.last_modified
                 
                 # 处理SSL问题：兼容所有版本的通用方案
-                # 1. 降低SSL安全级别以兼容旧证书
                 os.environ['SSL_CIPHER_LIST'] = 'DEFAULT@SECLEVEL=1'
-                # 2. 禁用证书验证（避免因证书问题导致的失败）
                 verify_ssl = False
                 
                 response = self.session.get(
                     url, 
                     headers=headers, 
                     timeout=15,
-                    verify=verify_ssl  # 使用布尔值而非SSLContext
+                    verify=verify_ssl
                 )
                 
                 if response.status_code == 304:
@@ -246,8 +244,8 @@ class NewsMonitor:
         
         articles = []
         try:
-            # 明确指定使用lxml解析器（需要安装lxml库）
-            soup = BeautifulSoup(html, 'lxml-xml')  # 修改这里，将'xml'改为'lxml-xml'
+            # 使用lxml解析器处理XML内容
+            soup = BeautifulSoup(html, 'lxml-xml')
             items = soup.find_all('item')
             
             if not items:
@@ -705,6 +703,162 @@ class NewsMonitor:
             logging.error(f"邮件发送失败: {str(e)}", exc_info=True)
             return False
 
+    def _generate_static_report(self, articles, translations, impact_summary, financial_data):
+        """生成静态HTML报告并更新索引"""
+        # 创建报告目录（如果不存在）
+        reports_dir = os.path.join(CURRENT_DIR, "docs", "reports")
+        os.makedirs(reports_dir, exist_ok=True)
+        
+        # 生成报告文件名（按北京时间命名）
+        report_time = datetime.now(self.beijing_tz)
+        report_filename = f"report_{report_time.strftime('%Y%m%d_%H%M')}.html"
+        report_path = os.path.join(reports_dir, report_filename)
+        report_url = f"reports/{report_filename}"  # 相对路径用于链接
+        
+        # 1. 生成单篇报告HTML
+        summary_time = report_time.strftime("%Y-%m-%d %H:%M")
+        earliest_time = min(art['pub_datetime'] for art in articles).astimezone(self.beijing_tz) if articles else None
+        latest_time = max(art['pub_datetime'] for art in articles).astimezone(self.beijing_tz) if articles else None
+        
+        # 时间范围信息
+        time_info = ""
+        if earliest_time and latest_time:
+            time_info = f"""
+            <p><strong>文章发布时间范围</strong>：
+            <br>北京时间：{earliest_time.strftime('%Y-%m-%d %H:%M:%S')} 至 {latest_time.strftime('%Y-%m-%d %H:%M:%S')}
+            <br>华盛顿时间：{earliest_time.astimezone(self.washington_tz).strftime('%Y-%m-%d %H:%M:%S')} 至 {latest_time.astimezone(self.washington_tz).strftime('%Y-%m-%d %H:%M:%S')}
+            </p>
+            """
+        
+        # 金融数据表格
+        financial_html = "<p><strong>三、金融市场数据</strong></p>"
+        financial_html += """
+        <table border="1" cellpadding="8" style="border-collapse:collapse; width:100%;">
+            <tr style="background-color:#f2f2f2;">
+                <th>资产名称</th>
+                <th>类型</th>
+                <th>当前价格</th>
+                <th>24小时变动</th>
+                <th>24小时变动百分比</th>
+            </tr>
+        """
+        for data in financial_data.values():
+            financial_html += "<tr>"
+            financial_html += f"<td>{data['name']}</td>"
+            financial_html += f"<td>{data['type']}</td>"
+            
+            if "error" in data:
+                financial_html += f"<td colspan='3'>{data['error']}</td>"
+            else:
+                change_style = "color:red;" if data["change_24h"] >= 0 else "color:green;"
+                percent_style = "color:red;" if data["change_percent_24h"] >= 0 else "color:green;"
+                
+                financial_html += f"<td>{data['current_price']}</td>"
+                financial_html += f"<td style='{change_style}'>{data['change_24h']}</td>"
+                financial_html += f"<td style='{percent_style}'>{data['change_percent_24h']}%</td>"
+            financial_html += "</tr>"
+        financial_html += "</table>"
+        
+        # 文章内容
+        articles_html = "<p><strong>一、原文+翻译</strong></p>"
+        if not translations:
+            articles_html += "<p>无新文章</p>"
+        else:
+            for trans in translations:
+                articles_html += f"""
+                <div style="margin: 15px 0; padding: 10px; border: 1px solid #eee; border-radius: 4px;">
+                    <p><strong>文章 {trans['article_index']}</strong></p>
+                    <p><strong>发布时间：</strong>
+                    北京时间 {trans['pub_time_beijing']}<br>
+                    华盛顿时间 {trans['pub_time_washington']}
+                    </p>
+                    <p><strong>原文内容：</strong>{trans['original_content']}</p>
+                    <p><strong>中文翻译：</strong>{trans['chinese_translation']}</p>
+                </div>
+                """
+        
+        # 分析内容
+        summary_html = f"""
+        <p><strong>二、经济影响汇总分析</strong></p>
+        <p>{markdown.markdown(impact_summary)}</p>
+        """
+        
+        # 完整报告HTML
+        report_html = f"""
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>新闻分析报告 - {summary_time}</title>
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; line-height: 1.6; }}
+                header {{ border-bottom: 2px solid #eee; padding: 20px 0; margin-bottom: 30px; }}
+                h1 {{ color: #2c3e50; }}
+                h2 {{ color: #34495e; margin: 30px 0 15px; padding-bottom: 5px; border-bottom: 1px solid #eee; }}
+                .back-link {{ display: inline-block; margin: 20px 0; padding: 8px 15px; background: #f5f5f5; text-decoration: none; color: #333; border-radius: 4px; }}
+                .back-link:hover {{ background: #eee; }}
+            </style>
+        </head>
+        <body>
+            <header>
+                <h1>新闻分析报告 - {summary_time}（北京时间）</h1>
+            </header>
+            
+            {time_info}
+            {articles_html}
+            {summary_html}
+            {financial_html}
+            
+            <a href="../index.html" class="back-link">返回报告列表</a>
+        </body>
+        </html>
+        """
+        
+        # 写入报告文件
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report_html)
+        logging.info(f"静态报告已生成：{report_path}")
+        
+        # 2. 更新主页的报告列表
+        self._update_reports_index(report_time, report_url, len(articles))
+
+    def _update_reports_index(self, report_time, report_url, article_count):
+        """更新主页的报告索引列表"""
+        index_path = os.path.join(CURRENT_DIR, "docs", "index.html")
+        if not os.path.exists(index_path):
+            logging.warning("主页文件不存在，无法更新报告列表")
+            return
+        
+        # 读取现有主页内容
+        with open(index_path, "r", encoding="utf-8") as f:
+            index_html = f.read()
+        
+        # 生成新报告条目
+        report_date = report_time.strftime("%Y-%m-%d %H:%M")
+        new_entry = f"""
+        <tr>
+            <td>{report_date}</td>
+            <td>{article_count}篇</td>
+            <td><a href="{report_url}" target="_self">查看报告</a></td>
+        </tr>
+        """
+        
+        # 插入到报告列表（寻找特定标记位置）
+        insert_marker = "<!-- REPORT_LIST_START -->"
+        if insert_marker in index_html:
+            updated_html = index_html.replace(
+                insert_marker,
+                f"{insert_marker}\n    {new_entry}"
+            )
+            
+            # 写入更新后的主页
+            with open(index_path, "w", encoding="utf-8") as f:
+                f.write(updated_html)
+            logging.info("主页报告列表已更新")
+        else:
+            logging.warning("未找到报告列表插入标记，无法更新主页")
+
     def _process_summary_batch(self, articles):
         """处理汇总批次"""
         # 获取金融数据
@@ -714,6 +868,8 @@ class NewsMonitor:
             logging.info("无新文章，仅输出金融数据并发送邮件")
             self._print_financial_data(financial_data)
             self._send_summary_email([], [], "【本次无新文章】", financial_data)
+            # 生成静态报告（无新文章时）
+            self._generate_static_report(articles, [], "【本次无新文章】", financial_data)
             return
             
         logging.info(f"开始处理汇总批次（共{len(articles)}篇文章）...")
@@ -758,6 +914,9 @@ class NewsMonitor:
         
         # 5. 发送邮件
         self._send_summary_email(articles, translations, impact_summary, financial_data)
+        
+        # 6. 生成静态报告并更新Pages
+        self._generate_static_report(articles, translations, impact_summary, financial_data)
 
     def _print_financial_data(self, financial_data):
         """控制台输出金融数据"""
@@ -787,6 +946,8 @@ class NewsMonitor:
             financial_data = self._get_financial_data()
             self._print_financial_data(financial_data)
             self._send_summary_email([], [], "【未获取到新内容】", financial_data)
+            # 生成静态报告（无内容时）
+            self._generate_static_report([], [], "【未获取到新内容】", financial_data)
             logging.info("任务执行完成")
             return
             
@@ -864,4 +1025,3 @@ if __name__ == "__main__":
     # 运行单次任务（只处理未处理过的新文章）
     monitor = NewsMonitor(config)
     monitor.run_once()
-
