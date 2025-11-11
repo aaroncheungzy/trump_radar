@@ -1,10 +1,10 @@
-name: Trump新闻监控与分析任务
+name: 新闻监控与分析任务
 
 on:
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
   schedule:
-    - cron: '0 2 * * *'   # 北京时间10:00（UTC 02:00）
-    - cron: '0 14 * * *'  # 北京时间22:00（UTC 14:00）
+    - cron: '0 2 * * *'
+    - cron: '0 14 * * *'
 
 jobs:
   run-task:
@@ -14,12 +14,22 @@ jobs:
       - name: 拉取代码
         uses: actions/checkout@v4
         with:
-          persist-credentials: true  # 保留凭据用于提交更新
+          persist-credentials: true
+      
+      # 新增：缓存历史记录文件
+      - name: 加载历史记录缓存
+        uses: actions/cache@v3
+        with:
+          path: processed_articles.json  # 缓存历史记录文件
+          key: processed-articles-${{ github.sha }}
+          restore-keys: |
+            processed-articles-
       
       - name: 设置Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
       
       - name: 安装依赖
         run: |
