@@ -1,6 +1,5 @@
 name: 新闻监控与分析任务
 
-# 触发条件：手动触发 + 每日定时执行（每次运行只处理新文章）
 on:
   workflow_dispatch:  # 允许手动触发
   schedule:
@@ -27,20 +26,16 @@ jobs:
       
       - name: 配置代理（可选）
         run: |
-          echo "HTTP_PROXY=${{ secrets.HTTP_PROXY }}" >> $GITHUB_ENV
-          echo "HTTPS_PROXY=${{ secrets.HTTPS_PROXY }}" >> $GITHUB_ENV
-        if: ${{ secrets.HTTP_PROXY != '' && secrets.HTTP_PROXY != null }}
+          if [ -n "${{ secrets.HTTP_PROXY }}" ]; then
+            echo "HTTP_PROXY=${{ secrets.HTTP_PROXY }}" >> $GITHUB_ENV
+            echo "HTTPS_PROXY=${{ secrets.HTTPS_PROXY }}" >> $GITHUB_ENV
+          fi
       
-      - name: 执行任务（只处理未处理过的新文章）
+      - name: 执行任务
         env:
-          # 邮件配置
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          EMAIL_SMTP_SERVER: ${{ secrets.EMAIL_SMTP_SERVER }}
-          EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
-          
-          # AI模型密钥
           DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
