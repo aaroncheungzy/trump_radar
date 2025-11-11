@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true  # 保留凭据用于提交更新
       
       - name: 设置Python
         uses: actions/setup-python@v5
@@ -40,6 +42,14 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           python news_monitor.py
+      
+      - name: 提交静态报告更新
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add docs/  # 添加所有静态文件变更
+          git commit -m "Auto-update reports: $(date +'%Y-%m-%d %H:%M')" || echo "No changes to commit"
+          git push origin main || echo "Push failed (no changes)"
       
       - name: 上传日志和历史记录
         uses: actions/upload-artifact@v4
