@@ -22,7 +22,12 @@
         .footer { text-align: center; margin: 50px 0 20px; color: #7f8c8d; }
         table { width: 100%; border-collapse: collapse; margin: 20px 0; }
         th, td { padding: 12px; border: 1px solid #ddd; text-align: left; }
-        th { background-color: #f8f9fa; }
+        th { background-color: #3498db; color: white; }
+        tr:hover { background-color: #f9f9f9; }
+        .report-section { margin: 50px 0; padding: 30px; background: #f5fafe; border-radius: 10px; }
+        .report-title { text-align: center; margin-bottom: 30px; color: #2c3e50; }
+        .report-link { color: #3498db; text-decoration: none; font-weight: 500; }
+        .report-link:hover { color: #2980b9; text-decoration: underline; }
     </style>
     <!-- 引入图标库 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -31,8 +36,28 @@
     <header>
         <h1>📰 新闻监控与金融分析系统</h1>
         <p>自动抓取新闻、翻译分析、金融数据整合、邮件推送一体化工具</p>
-        <a href="https://github.com/your-username/your-repo" class="btn" target="_blank"><i class="fab fa-github"></i> 查看源码</a>
+        <a href="https://github.com/aaroncheungzy/trump_radar" class="btn" target="_blank"><i class="fab fa-github"></i> 查看源码</a>
     </header>
+
+    <!-- 报告列表（提到首页最上方，显眼位置） -->
+    <section class="report-section">
+        <h2 class="report-title"><i class="fas fa-file-alt"></i> 最新分析报告</h2>
+        <p style="text-align: center; margin-bottom: 20px;">以下是系统自动生成的分析报告，点击即可查看完整内容</p>
+        <table>
+            <tr>
+                <th>生成时间（北京时间）</th>
+                <th>文章数量</th>
+                <th>操作</th>
+            </tr>
+            <!-- REPORT_LIST_START -->
+            <!-- 新报告条目会自动插入到这里 -->
+            <!-- 若无报告，显示提示 -->
+            <tr>
+                <td colspan="3" style="text-align: center; color: #7f8c8d;">暂无报告，系统执行后会自动生成</td>
+            </tr>
+            <!-- REPORT_LIST_END -->
+        </table>
+    </section>
 
     <section>
         <h2>核心功能</h2>
@@ -124,28 +149,6 @@
     </section>
 
     <section>
-        <h2>历史分析报告</h2>
-        <p>以下是系统自动生成的分析报告归档：</p>
-        <table>
-            <tr>
-                <th>生成时间（北京时间）</th>
-                <th>文章数量</th>
-                <th>操作</th>
-            </tr>
-            <!-- REPORT_LIST_START -->
-    
-        <tr>
-            <td>2025-11-11 17:43</td>
-            <td>3篇</td>
-            <td><a href="reports/report_20251111_1743.html" target="_self">查看报告</a></td>
-        </tr>
-        
-            <!-- 新报告条目会自动插入到这里 -->
-            <!-- REPORT_LIST_END -->
-        </table>
-    </section>
-
-    <section>
         <h2>常见问题</h2>
         <h3>Q1: 依赖安装失败？</h3>
         <p>A: 确保 pip 版本最新，GitHub Actions 环境会自动安装所有依赖，本地运行可手动安装缺失的库（如 lxml）。</p>
@@ -158,7 +161,7 @@
     </section>
 
     <div class="footer">
-        <p>© 2024 新闻监控与金融分析系统 | <a href="https://github.com/your-username/your-repo" target="_blank">GitHub 仓库</a></p>
+        <p>© 2024 新闻监控与金融分析系统 | <a href="https://github.com/aaroncheungzy/trump_radar" target="_blank">GitHub 仓库</a></p>
     </div>
 </body>
 </html>
