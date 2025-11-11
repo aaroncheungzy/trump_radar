@@ -1,4 +1,4 @@
-name: 新闻监控与分析任务
+name: Trump新闻监控与分析任务
 
 on:
   workflow_dispatch:  # 允许手动触发
