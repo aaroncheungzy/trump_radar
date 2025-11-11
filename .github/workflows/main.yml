@@ -1,6 +1,6 @@
 name: 新闻监控与分析任务
 
-# 触发条件：手动触发 + 每日定时执行
+# 触发条件：手动触发 + 每日定时执行（每次运行只处理新文章）
 on:
   workflow_dispatch:  # 允许手动触发
   schedule:
@@ -29,11 +29,11 @@ jobs:
         run: |
           echo "HTTP_PROXY=${{ secrets.HTTP_PROXY }}" >> $GITHUB_ENV
           echo "HTTPS_PROXY=${{ secrets.HTTPS_PROXY }}" >> $GITHUB_ENV
-        if: ${{ secrets.HTTP_PROXY != '' }}
+        if: ${{ secrets.HTTP_PROXY != '' && secrets.HTTP_PROXY != null }}
       
-      - name: 执行任务
+      - name: 执行任务（只处理未处理过的新文章）
         env:
-          # 邮件配置（使用指定的环境变量名称）
+          # 邮件配置
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
@@ -46,10 +46,10 @@ jobs:
         run: |
           python news_monitor.py
       
-      - name: 上传日志
+      - name: 上传日志和历史记录
         uses: actions/upload-artifact@v4
         with:
-          name: task-logs
+          name: task-data
           path: |
             news_monitor.log
             debug_raw_html.html
