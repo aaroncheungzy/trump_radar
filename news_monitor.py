@@ -246,7 +246,8 @@ class NewsMonitor:
         
         articles = []
         try:
-            soup = BeautifulSoup(html, 'xml')
+            # 明确指定使用lxml解析器（需要安装lxml库）
+            soup = BeautifulSoup(html, 'lxml-xml')  # 修改这里，将'xml'改为'lxml-xml'
             items = soup.find_all('item')
             
             if not items:
@@ -863,3 +864,4 @@ if __name__ == "__main__":
     # 运行单次任务（只处理未处理过的新文章）
     monitor = NewsMonitor(config)
     monitor.run_once()
+
