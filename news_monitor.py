@@ -68,7 +68,6 @@ class NewsMonitor:
         # 基础配置
         self.target_url = config["target_url"]
         self.history_file = os.path.join(CURRENT_DIR, config["history_file"])
-        self.summary_times = config["summary_times"]
         
         # 阈值参数
         self.thresholds = config["thresholds"]
@@ -776,7 +775,7 @@ class NewsMonitor:
         print("-"*80)
 
     def run_once(self):
-        """执行一次完整流程"""
+        """执行一次完整流程（只处理未处理过的新文章）"""
         logging.info(f"开始执行单次任务（{datetime.now(self.beijing_tz).strftime('%Y-%m-%d %H:%M:%S')} 北京时间）")
         
         # 1. 获取网页内容
@@ -792,7 +791,7 @@ class NewsMonitor:
         # 2. 提取文章
         all_articles = self._extract_articles_with_pubdate(html)
         
-        # 3. 筛选新文章
+        # 3. 筛选新文章（仅处理未处理过的）
         new_articles = self._get_all_new_articles(all_articles) if all_articles else []
         
         # 4. 处理汇总
@@ -801,39 +800,6 @@ class NewsMonitor:
         # 5. 清空临时ID缓存
         self.recent_article_ids.clear()
         logging.info("任务执行完成")
-
-    def start_scheduler(self):
-        """启动调度器（按配置的时间点执行）"""
-        logging.info(f"开始定时调度，检查时间（北京时间）：{self.summary_times}")
-        try:
-            # 解析汇总时间
-            summary_schedules = []
-            for t in self.summary_times:
-                hour, minute = map(int, t.split(":"))
-                summary_schedules.append((hour, minute))
-
-            while True:
-                now_bj = datetime.now(self.beijing_tz)
-                current_hour, current_minute = now_bj.hour, now_bj.minute
-                
-                # 检查是否匹配任意指定时间（允许±1分钟误差）
-                for (target_hour, target_minute) in summary_schedules:
-                    if (abs(current_hour - target_hour) == 0 and 
-                        abs(current_minute - target_minute) <= 1):
-                        
-                        # 执行任务
-                        self.run_once()
-                        # 避免同一时间点重复执行（等待2分钟）
-                        time.sleep(120)
-                        break
-                
-                # 每30秒检查一次时间
-                time.sleep(30)
-                
-        except KeyboardInterrupt:
-            logging.info("程序手动退出")
-        except Exception as e:
-            logging.error(f"调度器终止: {e}", exc_info=True)
 
 
 def load_config():
@@ -893,6 +859,6 @@ if __name__ == "__main__":
     # 加载配置
     config = load_config()
 
-    # 运行（默认启动调度器，按配置的时间点执行）
+    # 运行单次任务（只处理未处理过的新文章）
     monitor = NewsMonitor(config)
-    monitor.start_scheduler()
+    monitor.run_once()
