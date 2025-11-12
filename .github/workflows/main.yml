@@ -3,8 +3,8 @@ name: 新闻监控与分析任务
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 2 * * *'
-    - cron: '0 14 * * *'
+    - cron: '0 0 * * *'
+    - cron: '0 12 * * *'
 
 jobs:
   run-task:
