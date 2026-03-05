@@ -103,7 +103,7 @@ class NewsMonitor:
         self.deepseek_api_url = "https://api.deepseek.com/v1/chat/completions"
         self.deepseek_model = "deepseek-chat"
         self.doubao_client = Ark(api_key=self.doubao_api_key) if self.doubao_api_key else None
-        self.doubao_model = "doubao-1-5-pro-32k-250115"
+        self.doubao_model = "doubao-seed-1-8-251228"
         
         # 时区配置
         self.utc_tz = timezone.utc
@@ -1025,3 +1025,4 @@ if __name__ == "__main__":
     # 运行单次任务（只处理未处理过的新文章）
     monitor = NewsMonitor(config)
     monitor.run_once()
+
