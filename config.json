@@ -28,7 +28,6 @@
   },
   
   "ai_models": {
-    "doubao_api_key": "",
-    "deepseek_api_key": ""
+    "doubao_api_key": ""
   }
 }

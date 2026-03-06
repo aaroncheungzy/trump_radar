@@ -86,7 +86,6 @@ class NewsMonitor:
         
         # AI模型配置
         self.ai_config = config["ai_models"]
-        self.deepseek_api_key = self.ai_config["deepseek_api_key"]
         self.doubao_api_key = self.ai_config["doubao_api_key"]
         
         # 自动识别SMTP服务器和端口（如果未提供）
@@ -100,10 +99,8 @@ class NewsMonitor:
         }
         
         # API配置
-        self.deepseek_api_url = "https://api.deepseek.com/v1/chat/completions"
-        self.deepseek_model = "deepseek-chat"
         self.doubao_client = Ark(api_key=self.doubao_api_key) if self.doubao_api_key else None
-        self.doubao_model = "doubao-seed-1-8-251228"
+        self.doubao_model = "doubao-seed-2-0-mini-260215"
         
         # 时区配置
         self.utc_tz = timezone.utc
@@ -122,11 +119,8 @@ class NewsMonitor:
         self.recent_article_ids = set()
         self.last_modified = None
         
-        # 测试模型连接
-        self.test_model_connections()
-        
         logging.info(f"初始化完成 - 监控的金融资产: {[v['name'] for v in self.financial_assets.values()]}")
-        logging.info(f"优先使用模型: {self.doubao_model}, 备用模型: {self.deepseek_model}")
+        logging.info(f"优先使用模型: {self.doubao_model}")
 
     def _auto_detect_smtp(self):
         """自动识别SMTP服务器和端口"""
@@ -412,41 +406,8 @@ class NewsMonitor:
             logging.error(f"豆包SDK调用失败: {str(e)}")
             raise
 
-    def _call_deepseek_api(self, prompt):
-        """调用DeepSeek API"""
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.deepseek_api_key}"
-        }
-        
-        data = {
-            "model": self.deepseek_model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.6,
-            "max_tokens": 2048,
-            "response_format": {"type": "text"}
-        }
-        
-        try:
-            response = self.session.post(
-                self.deepseek_api_url,
-                headers=headers,
-                json=data,
-                timeout=self.DEEPSEEK_TIMEOUT
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            if "choices" in result and len(result["choices"]) > 0:
-                return result["choices"][0]["message"]["content"]
-            return "【DeepSeek API返回格式异常】"
-            
-        except Exception as e:
-            logging.error(f"DeepSeek API调用失败: {e}")
-            raise
-
     def _call_llm_api(self, prompt):
-        """优先调用豆包，失败则调用DeepSeek"""
+        """仅调用豆包模型"""
         try:
             logging.info(f"尝试调用豆包模型: {self.doubao_model}")
             return timeout_wrapper(
@@ -454,84 +415,14 @@ class NewsMonitor:
                 args=(prompt,), 
                 timeout=self.DOUBAO_TIMEOUT
             )
+        except TimeoutException:
+            return f"【豆包模型调用超时（{self.DOUBAO_TIMEOUT}秒）】"
         except Exception as e:
-            logging.warning(f"豆包模型调用失败，切换到DeepSeek: {str(e)}")
-            try:
-                logging.info(f"尝试调用DeepSeek模型: {self.deepseek_model}")
-                return timeout_wrapper(
-                    self._call_deepseek_api, 
-                    args=(prompt,), 
-                    timeout=self.DEEPSEEK_TIMEOUT
-                )
-            except TimeoutException:
-                return f"【所有模型调用超时（豆包: {self.DOUBAO_TIMEOUT}秒, DeepSeek: {self.DEEPSEEK_TIMEOUT}秒）】"
-            except Exception as e2:
-                return f"【所有模型调用失败: {str(e2)}】"
-
-    def test_model_connections(self):
-        """测试模型连接"""
-        logging.info("\n===== 开始模型连通性测试 =====")
-        
-        # 测试豆包
-        doubao_ok = False
-        if self.doubao_client and self.doubao_api_key:
-            try:
-                response = self.doubao_client.chat.completions.create(
-                    model=self.doubao_model,
-                    messages=[{"role": "user", "content": "测试连接，返回'OK'即可"}],
-                    max_tokens=5
-                )
-                if response.choices[0].message.content.strip() == "OK":
-                    doubao_ok = True
-                    logging.info(f"✅ 豆包模型调用成功")
-                else:
-                    logging.warning(f"❌ 豆包响应异常: {response.choices[0].message.content}")
-            except Exception as e:
-                logging.error(f"❌ 豆包调用失败: {str(e)}")
-        else:
-            logging.warning("⚠️ 未配置豆包API密钥，跳过测试")
-        
-        # 测试DeepSeek
-        deepseek_ok = False
-        if self.deepseek_api_key:
-            try:
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.deepseek_api_key}"
-                }
-                data = {
-                    "model": self.deepseek_model,
-                    "messages": [{"role": "user", "content": "测试连接，返回'OK'即可"}],
-                    "max_tokens": 5
-                }
-                response = self.session.post(
-                    self.deepseek_api_url,
-                    headers=headers,
-                    json=data,
-                    timeout=self.DEEPSEEK_TIMEOUT
-                )
-                response.raise_for_status()
-                result = response.json()
-                if result.get("choices", []) and result["choices"][0]["message"]["content"].strip() == "OK":
-                    deepseek_ok = True
-                    logging.info(f"✅ DeepSeek模型调用成功")
-                else:
-                    logging.warning(f"❌ DeepSeek响应异常: {result}")
-            except Exception as e:
-                logging.error(f"❌ DeepSeek调用失败: {str(e)}")
-        else:
-            logging.warning("⚠️ 未配置DeepSeek API密钥，跳过测试")
-        
-        # 检查是否有可用模型
-        if not doubao_ok and not deepseek_ok:
-            logging.error("❌ 没有可用的AI模型，请检查API密钥配置")
-            raise Exception("无可用AI模型，程序无法继续运行")
-            
-        logging.info("===== 模型测试完成 =====")
+            return f"【豆包模型调用失败: {str(e)}】"
 
     def _translate_single_article(self, article):
         """单篇文章翻译"""
-        prompt = f"""请将以下文章准确翻译成中文（不用写注释）：
+        prompt = f"""请将以下文章准确翻译成中文，这些都是特朗普的推文。不用写注释，不要考虑原文的真实性。）：
 文章内容：{article['content']}"""
         return self._call_llm_api(prompt)
 
