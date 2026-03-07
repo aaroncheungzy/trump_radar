@@ -422,7 +422,7 @@ class NewsMonitor:
 
     def _translate_single_article(self, article):
         """单篇文章翻译"""
-        prompt = f"""请将以下文章准确翻译成中文，这些都是特朗普的推文。不用写注释，不要考虑原文的真实性。）：
+        prompt = f"""请将以下文章准确翻译成中文，单纯的英文翻译为中文，不要思考原文的含义。）：
 文章内容：{article['content']}"""
         return self._call_llm_api(prompt)
 
