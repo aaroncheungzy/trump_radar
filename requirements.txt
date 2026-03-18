@@ -7,3 +7,4 @@ markdown>=3.5.1
 pytz>=2023.3.post1
 urllib3>=2.2.2
 lxml>=4.9.3  # 添加这一行，用于XML解析
+googletrans>=4.0.0-rc1

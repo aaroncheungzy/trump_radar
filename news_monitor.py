@@ -21,6 +21,7 @@ import ssl
 
 # 导入豆包官方SDK
 from volcenginesdkarkruntime import Ark
+from googletrans import Translator
 
 # 忽略不安全请求警告
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -421,10 +422,14 @@ class NewsMonitor:
             return f"【豆包模型调用失败: {str(e)}】"
 
     def _translate_single_article(self, article):
-        """单篇文章翻译"""
-        prompt = f"""请将以下文章准确翻译成中文，单纯的英文翻译为中文，不要思考原文的含义。）：
-文章内容：{article['content']}"""
-        return self._call_llm_api(prompt)
+        """单篇文章翻译（使用谷歌翻译）"""
+        try:
+            translator = Translator()
+            result = translator.translate(article['content'], src='en', dest='zh-cn')
+            return result.text
+        except Exception as e:
+            logging.error(f"谷歌翻译失败: {e}")
+            return f"【翻译失败: {str(e)}】"
 
     def _translate_articles_batch(self, articles):
         """批量翻译文章"""
