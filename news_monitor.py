@@ -21,7 +21,7 @@ import ssl
 
 # 导入豆包官方SDK
 from volcenginesdkarkruntime import Ark
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 
 # 忽略不安全请求警告
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -424,9 +424,9 @@ class NewsMonitor:
     def _translate_single_article(self, article):
         """单篇文章翻译（使用谷歌翻译）"""
         try:
-            translator = Translator()
-            result = translator.translate(article['content'], src='en', dest='zh-cn')
-            return result.text
+            translator = GoogleTranslator(source='en', target='zh-CN')
+            result = translator.translate(article['content'])
+            return result
         except Exception as e:
             logging.error(f"谷歌翻译失败: {e}")
             return f"【翻译失败: {str(e)}】"
