@@ -101,7 +101,7 @@ class NewsMonitor:
         
         # API配置
         self.doubao_client = Ark(api_key=self.doubao_api_key) if self.doubao_api_key else None
-        self.doubao_model = "doubao-seed-2-0-mini-260215"
+        self.doubao_model = "glm-4-7-251222"
         
         # 时区配置
         self.utc_tz = timezone.utc
