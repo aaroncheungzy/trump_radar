@@ -272,6 +272,12 @@ class NewsMonitor:
                     logging.debug(f"跳过短内容文章（标题：{title}）")
                     continue
                 
+                # 过滤包含"WILL NEVER LET YOU DOWN"的文章
+                blacklist_text = "WILL NEVER LET YOU DOWN"
+                if (blacklist_text in title.upper()) or (blacklist_text in cleaned_content.upper()):
+                    logging.info(f"跳过包含禁用关键词的文章（标题：{title}）")
+                    continue
+                
                 # 解析为UTC时间对象
                 try:
                     pub_datetime_utc = parser.parse(pub_date_str).replace(tzinfo=self.utc_tz)
